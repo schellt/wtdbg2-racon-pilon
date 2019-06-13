@@ -1,7 +1,7 @@
 # wtdbg2-racon-pilon.pl v0.3
 
 ## Description
-__Automatic execution of (wtdbg2,) racon and pilon.__
+__Automatic execution of (wtdbg2,) Racon and Pilon.__
 
 Longread assembly will be executed with wtdbg2.
 Iterative correction with long reads by mapping to the assembly with minimap2 and polishing with Racon.

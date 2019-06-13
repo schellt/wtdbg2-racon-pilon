@@ -5,15 +5,15 @@ use warnings;
 use Cwd 'abs_path';
 use IPC::Cmd qw[can_run run];
 
-my $version = "0.2";
+my $version = "0.3";
 
 sub print_help{
 	print STDOUT "\n";
 	print STDOUT "wtdbg2-racon-pilon.pl v$version\n";
 	print STDOUT "\n";
 	print STDOUT "Description:\n";
-	print STDOUT "\tAutomatic execution of wtdbg2, racon and pilon.\n";
-	print STDOUT "\t- The tools wtdbg2 and wtpoa-cns need to be in your \$PATH.\n";
+	print STDOUT "\tAutomatic execution of (wtdbg2,) racon and pilon.\n";
+	print STDOUT "\t- The tools wtdbg2 and wtpoa-cns need to be in your \$PATH if longreads should be assembled.\n";
 	print STDOUT "\t- For execution of racon your \$PATH should contain racon and minimap2.\n";
 	print STDOUT "\t  Afterwards long reads are mapped to the assembly and correction(s) with racon are executed.\n";
 	print STDOUT "\t- If pilon should be executed java, bwa and samtools need to be in your \$PATH,\n";
@@ -22,7 +22,7 @@ sub print_help{
 	print STDOUT "\t  files are sorted by samtools and pilon is executed on the bam files and the assembly.\n";
 	print STDOUT "\n";
 	print STDOUT "Usage:\n";
-	print STDOUT "\twtdbg2-racon-pilon.pl -l <longreads.fq> -x <longread tech>\n";
+	print STDOUT "\twtdbg2-racon-pilon.pl {-l <longreads.fq> -x <longread tech> | -a <assembly.fa>}\n";
 	print STDOUT "\t[-p <paired_1.fq>,<paired_2.fq> -u <unpaired.fq>]\n";
 	print STDOUT "\n";
 	print STDOUT "Mandatory:\n";
@@ -30,6 +30,8 @@ sub print_help{
 	print STDOUT "\t-x STR\t\t\tLong read sequencing technology for wtdbg2 presets\n";
 	print STDOUT "\t\t\t\tValid arguments are: rsII, rs, sequel, sq, nanopore, ont,\n";
 	print STDOUT "\t\t\t\tcorrected, ccs\n";
+	print STDOUT "\tOR\n";
+	print STDOUT "\t-a STR\t\t\tFile containing an assembly that should be polished in fasta format\n";
 	print STDOUT "\n";
 	print STDOUT "Input/pipeline options: [default]\n";
 	print STDOUT "\t-racon-rounds INT\tNumber of racon iterations [3]\n";
@@ -54,7 +56,7 @@ sub print_help{
 	print STDOUT "Output options: [default]\n";
 	print STDOUT "\t-o STR\t\t\tOutput directory [.]\n";
 	print STDOUT "\t\t\t\tWill be created if not existing\n";
-	print STDOUT "\t-pre STR\t\tPrefix of output files [wr<racon rounds>p<pilon rounds>]\n";
+	print STDOUT "\t-pre STR\t\tPrefix of output files [{w|<-a>.}r<racon rounds>p<pilon rounds>]\n";
 	print STDOUT "\t-v\t\t\tPrint executed commands to STDERR [off]\n";
 	print STDOUT "\t-dry-run\t\tOnly print commands to STDERR instead of executing [off]\n";
 #	print STDOUT "\t-kt\t\tKeep temporary files [off]\n";
@@ -76,6 +78,7 @@ sub exe_cmd{
 }
 
 my $out_dir = abs_path("./");
+my $assembly = "";
 my $longreads = "";
 my $longread_tech = "";
 my @paired = ();
@@ -113,6 +116,9 @@ if(-f "/proc/meminfo"){
 for (my $i = 0; $i < scalar(@ARGV);$i++){
 	if ($ARGV[$i] eq "-o"){
 		$out_dir = abs_path($ARGV[$i+1]);
+	}
+	if ($ARGV[$i] eq "-a"){
+		$assembly = abs_path($ARGV[$i+1]);
 	}
 	if ($ARGV[$i] eq "-l"){
 		$longreads = abs_path($ARGV[$i+1]);
@@ -200,13 +206,20 @@ if(scalar(@ARGV) == 0){
 
 print STDERR "CMD\t" . $0 . " " . join(" ",@ARGV) . "\n";
 
-if(not defined(can_run("wtdbg2"))){
-	print STDERR "ERROR\twtdbg2 is not in your \$PATH\n";
+if($assembly eq "" and $longreads eq ""){
+	print STDERR "ERROR\tSpecify either longreads or an assembly!\n";
 	$input_error = 1;
 }
-if(not defined(can_run("wtpoa-cns"))){
-	print STDERR "ERROR\twtpoa-cns is not in your \$PATH\n";
-	$input_error = 1;
+
+if($assembly eq ""){
+	if(not defined(can_run("wtdbg2"))){
+		print STDERR "ERROR\twtdbg2 is not in your \$PATH\n";
+		$input_error = 1;
+	}
+	if(not defined(can_run("wtpoa-cns"))){
+		print STDERR "ERROR\twtpoa-cns is not in your \$PATH\n";
+		$input_error = 1;
+	}
 }
 
 if($racon_rounds > 0){
@@ -276,13 +289,6 @@ if(-f "$out_dir"){
 	print STDERR "ERROR\tOutput directory $out_dir is already a file!\n";
 	$input_error = 1;
 }
-else{
-	if(not -d "$out_dir"){
-		print STDERR "INFO\tCreating output directory $out_dir\n";
-		$cmd="mkdir -p $out_dir";
-		exe_cmd($cmd,$verbose,$dry);
-	}
-}
 
 if($threads !~ m/^\d+$/ or $threads < 1){
 	print STDERR "ERROR\tThreads is no integer >= 1!\n";
@@ -296,23 +302,29 @@ if($pilon_rounds !~ m/^\d+$/ or $pilon_rounds < 0){
 	print STDERR "ERROR\t-pilon-rounds is no integer >= 0!\n";
 	$input_error = 1;
 }
-if($longread_tech eq ""){
-	print STDERR "ERROR\tLong read technology needs to be specified!\n";
-	$input_error = 1;
-}
-else{
-	if($longread_tech ne "rsII" and $longread_tech ne "rs" and $longread_tech ne "sequel" and $longread_tech ne "sq" and $longread_tech ne "nanopore" and $longread_tech ne "ont" and $longread_tech ne "corrected"and $longread_tech ne "ccs"){
-		print STDERR "ERROR\tNo valid long read technology specified!\n";
+
+if($assembly eq ""){
+	if($longread_tech eq ""){
+		print STDERR "ERROR\tLong read technology needs to be specified!\n";
 		$input_error = 1;
 	}
+	else{
+		if($longread_tech ne "rsII" and $longread_tech ne "rs" and $longread_tech ne "sequel" and $longread_tech ne "sq" and $longread_tech ne "nanopore" and $longread_tech ne "ont" and $longread_tech ne "corrected"and $longread_tech ne "ccs"){
+			print STDERR "ERROR\tNo valid long read technology specified!\n";
+			$input_error = 1;
+		}
+	}
 }
+
 if($xmx eq "" and $pilon_rounds > 0){
 	print STDERR "ERROR\tJava Xmx not specified and /proc/meminfo not present!\n";
 	$input_error = 1;
 }
-if(not -f "$longreads"){
-	print STDERR "ERROR\tNo existing long read file specified!\n";
-	$input_error = 1;
+if($longreads ne ""){
+	if(not -f "$longreads"){
+		print STDERR "ERROR\tNo existing long read file specified!\n";
+		$input_error = 1;
+	}
 }
 
 if ($input_error == 1){
@@ -320,8 +332,25 @@ if ($input_error == 1){
 	exit 1;
 }
 
+if(not -d "$out_dir"){
+	print STDERR "INFO\tCreating output directory $out_dir\n";
+	$cmd="mkdir -p $out_dir";
+	exe_cmd($cmd,$verbose,$dry);
+}
+
+if($longreads eq ""){
+	print STDERR "INFO\tNo long read file specified! Setting racon rounds to 0\n";
+	$racon_rounds = 0;
+}
+
 if($prefix eq ""){
-	$prefix = "wr" . $racon_rounds . "p" . $pilon_rounds;
+	if($assembly eq ""){
+		$prefix = "wr" . $racon_rounds . "p" . $pilon_rounds;
+	}
+	else{
+		$a=(split /\//,$assembly)[-1];
+		$prefix = $a . ".r" . $racon_rounds . "p" . $pilon_rounds;
+	}
 	print STDERR "INFO\tSetting Outpufile prefix to $prefix\n";
 }
 if($longread_tech eq "rsII" or $longread_tech eq "rs" or $longread_tech eq "sequel" or $longread_tech eq "sq"){
@@ -382,16 +411,28 @@ foreach(@unpaired){
 	}
 }
 
-if(scalar(keys(%paired_filter)) == 0 and scalar(keys(%unpaired_filter)) == 0 and $pilon_rounds > 0){
-	print STDERR "ERROR\tNo existing short read files specified and number of pilon rounds > 0!\n";
+if(scalar(keys(%paired_filter)) == 0 and scalar(keys(%unpaired_filter)) == 0){
+	print STDERR "INFO\tNo existing short read files specified! Setting pilon rounds to 0\n";
+	$pilon_rounds = 0;
+	@srmapper = ();
+}
+
+if($racon_rounds == 0 and $pilon_rounds == 0 and $assembly ne ""){
+	print STDERR "ERROR\tAssembly as input (-a) and racon as well as pilon rounds are 0\n";
+	print STDERR "ERROR\tNothing to do.\n";
 	exit 1;
 }
 
-my $wtdbg2_version = `wtdbg2 -V | awk '{print \$2}'`;
-chomp $wtdbg2_version;
+my $wtdbg2_version;
+my $wtpoa_cns_version;
 
-my $wtpoa_cns_version = `wtpoa-cns -V | awk '{print \$2}'`;
-chomp $wtpoa_cns_version;
+if($assembly eq ""){
+	$wtdbg2_version = `wtdbg2 -V | awk '{print \$2}'`;
+	chomp $wtdbg2_version;
+
+	$wtpoa_cns_version = `wtpoa-cns -V | awk '{print \$2}'`;
+	chomp $wtpoa_cns_version;
+}
 
 my $minimap_version;
 my $racon_version;
@@ -450,8 +491,10 @@ print "wtdbg2-racon-pilon.pl v$version\n";
 print "\n";
 print "Detected tools\n";
 print "==============\n";
-print "wtdbg:                " . $wtdbg2_version . "\n";
-print "wtpoa-cns:            " . $wtpoa_cns_version . "\n";
+if($assembly eq ""){
+	print "wtdbg:                " . $wtdbg2_version . "\n";
+	print "wtpoa-cns:            " . $wtpoa_cns_version . "\n";
+}
 if($racon_rounds > 0){
 	print "minimap:              " . $minimap_version . "\n";
 	print "racon:                " . $racon_version . "\n";
@@ -471,7 +514,12 @@ print "\n";
 print "User defined input\n";
 print "==================\n";
 print "output directory:     " . $out_dir . "\n";
-print "long reads:           " . $longreads . "\n";
+if($assembly ne ""){
+	print "assembly:             " . $assembly . "\n";
+}
+if($longreads ne ""){
+	print "long reads:           " . $longreads . "\n";
+}
 if(scalar(keys(%paired_filter)) > 0){
 	print "paired reads:         ";
 	print join("\n                      ",keys(%paired_filter)) . "\n";
@@ -484,11 +532,13 @@ print "number of threads:    " . $threads . "\n";
 print "outpufile prefix:     " . $prefix . "\n";
 print "verbose:              " . $verbose_word . "\n";
 #print "Keep temporary files: " . $keep_word . "\n";
-if($wtdbg2_opts ne ""){
-	print "wtdbg options:        " . $wtdbg2_opts . "\n";
-}
-if($wtpoa_opts ne ""){
-	print "wtpoa-cns options:    " . $wtpoa_opts . "\n";
+if($assembly eq ""){
+	if($wtdbg2_opts ne ""){
+		print "wtdbg options:        " . $wtdbg2_opts . "\n";
+	}
+	if($wtpoa_opts ne ""){
+		print "wtpoa-cns options:    " . $wtpoa_opts . "\n";
+	}
 }
 if($racon_rounds > 0){
 	if($minimap_opts ne ""){
@@ -514,26 +564,31 @@ if($pilon_rounds > 0){
 print "racon rounds:         " . $racon_rounds . "\n";
 print "pilon rounds:         " . $pilon_rounds . "\n";
 
-$cmd = "wtdbg2 -x $longread_tech $wtdbg2_opts-i $longreads -t $threads -o $out_dir/$prefix > $out_dir/$prefix\_wtdbg2.log 2> $out_dir/$prefix\_wtdbg2.err";
-exe_cmd($cmd,$verbose,$dry);
+if($assembly eq ""){
+	$cmd = "wtdbg2 -x $longread_tech $wtdbg2_opts-i $longreads -t $threads -o $out_dir/$prefix > $out_dir/$prefix\_wtdbg2.log 2> $out_dir/$prefix\_wtdbg2.err";
+	exe_cmd($cmd,$verbose,$dry);
+	
+	$cmd = "wtpoa-cns $wtpoa_opts-t $threads -i $out_dir/$prefix.ctg.lay.gz -o $out_dir/$prefix.ctg.fa > $out_dir/$prefix\_wtpoa.log 2> $out_dir/$prefix\_wtpoa.err";
+	exe_cmd($cmd,$verbose,$dry);
+	
+	$final_assembly = "$out_dir/$prefix.ctg.fa";
+	
+	$assembly = "$out_dir/$prefix.ctg.fa";
+}
 
-$cmd = "wtpoa-cns $wtpoa_opts-t $threads -i $out_dir/$prefix.ctg.lay.gz -o $out_dir/$prefix.ctg.fa > $out_dir/$prefix\_wtpoa.log 2> $out_dir/$prefix\_wtpoa.err";
-exe_cmd($cmd,$verbose,$dry);
-
-$final_assembly = "$out_dir/$prefix.ctg.fa";
-
-my $assembly = "$out_dir/$prefix.ctg.fa";
-for(my $i=1; $i < $racon_rounds+1; $i++){
-	if($i > 1){
-		my $before = $i-1;
-		$assembly = "$out_dir/$prefix\_racon_$before.fasta";
+if($longreads ne ""){
+	for(my $i=1; $i < $racon_rounds+1; $i++){
+		if($i > 1){
+			my $before = $i-1;
+			$assembly = "$out_dir/$prefix\_racon_$before.fasta";
+		}
+		$cmd = "minimap2 $minimap_opts-t $threads $assembly $longreads > $out_dir/$prefix\_minimap2_$i.paf 2> $out_dir/$prefix\_minimap2_$i.err";
+		exe_cmd($cmd,$verbose,$dry);
+		$cmd = "racon $racon_opts-t $threads $longreads $out_dir/$prefix\_minimap2_$i.paf $assembly > $out_dir/$prefix\_racon_$i.fasta 2> $out_dir/$prefix\_racon_$i.err";
+		$assembly = "$out_dir/$prefix\_racon_$i.fasta";
+		$final_assembly = "$out_dir/$prefix\_racon_$i.fasta";
+		exe_cmd($cmd,$verbose,$dry);
 	}
-	$cmd = "minimap2 $minimap_opts-t $threads $assembly $longreads > $out_dir/$prefix\_minimap2_$i.paf 2> $out_dir/$prefix\_minimap2_$i.err";
-	exe_cmd($cmd,$verbose,$dry);
-	$cmd = "racon $racon_opts-t $threads $longreads $out_dir/$prefix\_minimap2_$i.paf $assembly > $out_dir/$prefix\_racon_$i.fasta 2> $out_dir/$prefix\_racon_$i.err";
-	$assembly = "$out_dir/$prefix\_racon_$i.fasta";
-	$final_assembly = "$out_dir/$prefix\_racon_$i.fasta";
-	exe_cmd($cmd,$verbose,$dry);
 }
 
 for(my $j = 0; $j < scalar(@srmapper); $j++){
