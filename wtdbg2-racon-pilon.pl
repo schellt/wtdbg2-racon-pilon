@@ -5,7 +5,7 @@ use warnings;
 use Cwd 'abs_path';
 use IPC::Cmd qw[can_run run];
 
-my $version = "0.1";
+my $version = "0.2";
 
 sub print_help{
 	print STDOUT "\n";
@@ -15,7 +15,7 @@ sub print_help{
 	print STDOUT "\tAutomatic execution of wtdbg2, racon and pilon.\n";
 	print STDOUT "\t- The tools wtdbg2 and wtpoa-cns need to be in your \$PATH.\n";
 	print STDOUT "\t- For execution of racon your \$PATH should contain racon and minimap2.\n";
-	print STDOUT "\t  Afterwards long reads are mapped to assembly and correction(s) with racon are executed.\n";
+	print STDOUT "\t  Afterwards long reads are mapped to the assembly and correction(s) with racon are executed.\n";
 	print STDOUT "\t- If pilon should be executed java, bwa and samtools need to be in your \$PATH,\n";
 	print STDOUT "\t  as well -pilon-path and at least one Illumina read file need to be specified.\n";
 	print STDOUT "\t  Paired and unpaired short reads are mapped to the assembly by bwa mem, resulting bam\n";
@@ -37,6 +37,8 @@ sub print_help{
 	print STDOUT "\t-pilon-path STR\t\tComplete path to the pilon jar file\n";
 	print STDOUT "\t-sr-mapper STR\t\tShort read mapper for correction with pilon [bwa]\n";
 	print STDOUT "\t\t\t\tValid arguments are: bwa, ngm\n";
+	print STDOUT "\t\t\t\tTo execute different mappers in different pilon rounds supply a\n";
+	print STDOUT "\t\t\t\tcomma separated list of mappers. Overrides -pilon-rounds.\n";
 	print STDOUT "\t-p STR\t\t\tTwo files with paired short reads in fastq format comma sperated\n";
 	print STDOUT "\t\t\t\tCan be specified multiple times\n";
 	print STDOUT "\t-u STR\t\t\tOne file with unpaired short reads in fastq format\n";
@@ -47,10 +49,11 @@ sub print_help{
 	print STDOUT "\t\t\t\tsamtools sort and pilon.\n";
 	print STDOUT "\tPass specific options to tools with:\n";
 	print STDOUT "\t-wtdbg-opts, -wtpoa-opts, -minimap-opts, -racon-opts, -bwa-opts, -ngm-opts, -pilon-opts\n";
-	print STDOUT "\tFor example like -wtdbg-opts \$\'-g 100m\'\n";
+	print STDOUT "\tFor example like -wtdbg-opts \'-g 100m\'\n";
 	print STDOUT "\n";
 	print STDOUT "Output options: [default]\n";
 	print STDOUT "\t-o STR\t\t\tOutput directory [.]\n";
+	print STDOUT "\t\t\t\tWill be created if not existing\n";
 	print STDOUT "\t-pre STR\t\tPrefix of output files [wr<racon rounds>p<pilon rounds>]\n";
 	print STDOUT "\t-v\t\t\tPrint executed commands to STDERR [off]\n";
 	print STDOUT "\t-dry-run\t\tOnly print commands to STDERR instead of executing [off]\n";
@@ -84,18 +87,21 @@ my $wtdbg2_opts = "";
 my $wtpoa_opts = "";
 my $minimap_opts = "";
 my $racon_opts = "";
-my $bwa_opts = "-a -c 10000";
+my $bwa_opts = "-a -c 10000 ";
 my $ngm_opts = "";
 my $pilon_opts = "";
 my $racon_rounds = 3;
 my $pilon_rounds = 3;
 my $pilon_path = "";
 my $sr_mapper = "bwa";
+my @srmapper = ();
 my $keep_tmp = 0;
 my $xmx = "";
 my $dry = 0;
 my $cmd;
 my $final_assembly = "";
+my $home = `echo \$HOME`;
+chomp $home;
 
 my $input_error = 0;
 
@@ -134,31 +140,31 @@ for (my $i = 0; $i < scalar(@ARGV);$i++){
 	}
 	if ($ARGV[$i] eq "-bwa-opts"){
 		$bwa_opts = $ARGV[$i+1] . " ";	#nonsense flags are skipped from bwa
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-ngm-opts"){
 		$ngm_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-wtdbg-opts"){
 		$wtdbg2_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-wtpoa-opts"){
 		$wtpoa_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-minimap-opts"){
 		$minimap_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-racon-opts"){
 		$racon_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-pilon-opts"){
 		$pilon_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\$\'$ARGV[$i+1]\'";
+		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
 	if ($ARGV[$i] eq "-racon-rounds"){
 		$racon_rounds = $ARGV[$i+1];
@@ -214,12 +220,40 @@ if($racon_rounds > 0){
 	}
 }
 
+if($sr_mapper =~ m/,/){
+	@srmapper = split(/,/,$sr_mapper);
+	my $sr_mapper_error = 0;
+	foreach(@srmapper){
+		if($_ ne "bwa" and $_ ne "ngm"){
+			print STDERR "ERROR\t$_ is not a valid argument for -sr-mapper!\n";
+			$input_error = 1;
+			$sr_mapper_error = 1;
+		}
+	}
+	if($sr_mapper_error == 1){
+		print STDERR "ERROR\tNo valid short read mapper specified!\n";
+		$input_error = 1;
+	}
+	else{
+		$pilon_rounds = scalar(@srmapper);
+	}
+}
+else{
+	if($sr_mapper ne "bwa" and $sr_mapper ne "ngm" and $pilon_rounds > 0){
+		print STDERR "ERROR\tNo valid short read mapper specified!\n";
+		$input_error = 1;
+	}
+	else{
+		@srmapper = (($sr_mapper) x $pilon_rounds);
+	}
+}
+
 if($pilon_rounds > 0){
-	if(not defined(can_run("bwa")) and $sr_mapper eq "bwa"){
+	if(not defined(can_run("bwa")) and $sr_mapper =~ /bwa/){
 		print STDERR "ERROR\tbwa is not in your \$PATH and pilon rounds > 0!\n";
 		$input_error = 1;
 	}
-	if(not defined(can_run("ngm")) and $sr_mapper eq "ngm"){
+	if(not defined(can_run("ngm")) and $sr_mapper =~ /ngm/){
 		print STDERR "ERROR\tngm is not in your \$PATH and pilon rounds > 0!\n";
 		$input_error = 1;
 	}
@@ -238,10 +272,18 @@ if($pilon_rounds > 0){
 }
 
 
-if(not -d "$out_dir"){
-	print STDERR "ERROR\t$out_dir is not a directory!\n";
+if(-f "$out_dir"){
+	print STDERR "ERROR\tOutput directory $out_dir is already a file!\n";
 	$input_error = 1;
 }
+else{
+	if(not -d "$out_dir"){
+		print STDERR "INFO\tCreating output directory $out_dir\n";
+		$cmd="mkdir -p $out_dir";
+		exe_cmd($cmd,$verbose,$dry);
+	}
+}
+
 if($threads !~ m/^\d+$/ or $threads < 1){
 	print STDERR "ERROR\tThreads is no integer >= 1!\n";
 	$input_error = 1;
@@ -272,10 +314,6 @@ if(not -f "$longreads"){
 	print STDERR "ERROR\tNo existing long read file specified!\n";
 	$input_error = 1;
 }
-if($sr_mapper ne "bwa" and $sr_mapper ne "ngm" and $pilon_rounds > 0){
-	print STDERR "ERROR\tNo valid short read mapper specified!\n";
-	$input_error = 1;
-}
 
 if ($input_error == 1){
 	print STDERR "ERROR\tInput error detected!\n";
@@ -299,6 +337,11 @@ my %paired_filter;
 
 foreach(@paired){
 	my @pair = split(/,/,$_);
+	foreach(@pair){
+		if($_ =~ m/^~/){
+			$_ =~ s/^~/$home/;	#~ is translated by bash into $HOME. This does not work if there is no space infront. That means if the second file starts with "~" it will not be recognized even though it exists
+		}
+	}
 	if(scalar(@pair) != 2){
 		print STDERR "INFO\tNot a pair: $_ - skipping these file(s)\n";
 	}
@@ -344,10 +387,10 @@ if(scalar(keys(%paired_filter)) == 0 and scalar(keys(%unpaired_filter)) == 0 and
 	exit 1;
 }
 
-my $wtdbg2_version = `wtdbg2 --version | awk '{print \$2}'`;
+my $wtdbg2_version = `wtdbg2 -V | awk '{print \$2}'`;
 chomp $wtdbg2_version;
 
-my $wtpoa_cns_version = `wtpoa-cns -h | grep "^Version: " | awk '{print \$2}'`;
+my $wtpoa_cns_version = `wtpoa-cns -V | awk '{print \$2}'`;
 chomp $wtpoa_cns_version;
 
 my $minimap_version;
@@ -366,12 +409,12 @@ my $samtools_version;
 my $java_version;
 my $pilon_version;
 if($pilon_rounds > 0){
-	if($sr_mapper eq "bwa"){
+	if($sr_mapper =~ /bwa/){
 		$bwa_version = `bwa 2>&1 | head -3 | tail -1 | sed 's/^Version: //'`;
 		chomp $bwa_version;
 	}
 	
-	if($sr_mapper eq "ngm"){
+	if($sr_mapper =~ /ngm/){
 		$ngm_version = `ngm 2>&1 | grep "\\[MAIN\\] NextGenMap " | awk '{print \$NF}'`;
 		chomp $ngm_version;
 	}
@@ -403,6 +446,8 @@ else{
 }
 
 print "\n";
+print "wtdbg2-racon-pilon.pl v$version\n";
+print "\n";
 print "Detected tools\n";
 print "==============\n";
 print "wtdbg:                " . $wtdbg2_version . "\n";
@@ -412,10 +457,10 @@ if($racon_rounds > 0){
 	print "racon:                " . $racon_version . "\n";
 }
 if($pilon_rounds > 0){
-	if($sr_mapper eq "bwa"){
+	if($sr_mapper =~ m/bwa/){
 		print "bwa:                  " . $bwa_version . "\n";
 	}
-	if($sr_mapper eq "ngm"){
+	if($sr_mapper =~ m/ngm/){
 		print "ngm:                  " . $ngm_version . "\n";
 	}
 	print "samtools:             " . $samtools_version . "\n";
@@ -455,10 +500,10 @@ if($racon_rounds > 0){
 }
 if($pilon_rounds > 0){
 	print "short read mapper:    " . $sr_mapper . "\n";
-	if($bwa_opts ne "" and $sr_mapper eq "bwa"){
+	if($bwa_opts ne "" and $sr_mapper =~ m/bwa/){
 		print "bwa options:          " . $bwa_opts . "\n";
 	}
-	if($ngm_opts ne "" and $sr_mapper eq "ngm"){
+	if($ngm_opts ne "" and $sr_mapper =~ m/ngm/){
 		print "ngm options:          " . $ngm_opts . "\n";
 	}
 	if($pilon_opts ne ""){
@@ -469,10 +514,10 @@ if($pilon_rounds > 0){
 print "racon rounds:         " . $racon_rounds . "\n";
 print "pilon rounds:         " . $pilon_rounds . "\n";
 
-$cmd = "wtdbg2 $wtdbg2_opts-x $longread_tech -i $longreads -t $threads -o $out_dir/$prefix > $out_dir/wtdbg2.log 2> $out_dir/wtdbg2.err";
+$cmd = "wtdbg2 -x $longread_tech $wtdbg2_opts-i $longreads -t $threads -o $out_dir/$prefix > $out_dir/$prefix\_wtdbg2.log 2> $out_dir/$prefix\_wtdbg2.err";
 exe_cmd($cmd,$verbose,$dry);
 
-$cmd = "wtpoa-cns $wtpoa_opts-t $threads -i $out_dir/$prefix.ctg.lay.gz -o $out_dir/$prefix.ctg.fa > $out_dir/wtpoa.log 2> $out_dir/wtpoa.err";
+$cmd = "wtpoa-cns $wtpoa_opts-t $threads -i $out_dir/$prefix.ctg.lay.gz -o $out_dir/$prefix.ctg.fa > $out_dir/$prefix\_wtpoa.log 2> $out_dir/$prefix\_wtpoa.err";
 exe_cmd($cmd,$verbose,$dry);
 
 $final_assembly = "$out_dir/$prefix.ctg.fa";
@@ -491,7 +536,9 @@ for(my $i=1; $i < $racon_rounds+1; $i++){
 	exe_cmd($cmd,$verbose,$dry);
 }
 
-for(my $i=1; $i < $pilon_rounds+1; $i++){
+for(my $j = 0; $j < scalar(@srmapper); $j++){
+	my $i = $j+1;
+	$sr_mapper = $srmapper[$j];
 	my @paired_bams = ();
 	my @unpaired_bams = ();
 	if($i > 1){
@@ -512,7 +559,20 @@ for(my $i=1; $i < $pilon_rounds+1; $i++){
 			$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$i.$p.err | samtools view -1 -b - > $out_dir/$prefix\_paired_$i.$p.bam";
 		}
 		if($sr_mapper eq "ngm"){
-			$cmd = "ngm $ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
+			my $paired_ngm_opts = $ngm_opts;
+			my @p_ngm_opts = split(/ /,$ngm_opts);
+			my $change_ngm_opts = 0;
+			for(my $i = 0; $i < scalar(@p_ngm_opts); $i++){
+				if($p_ngm_opts[$i] eq "-n" or $p_ngm_opts[$i] eq "--topn"){
+					$change_ngm_opts = 1;
+					splice (@p_ngm_opts,$i,2);
+				}
+			}
+			if($change_ngm_opts == 1){
+				print STDERR "INFO\tPaired end mode with -n/--topn > 1 is not supported in ngm. Removing the option.\n";
+				$paired_ngm_opts = join(" ",@p_ngm_opts) . " ";
+			}
+			$cmd = "ngm $paired_ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
 		}
 		exe_cmd($cmd,$verbose,$dry);
 		$cmd = "samtools sort -l 9 -@ $threads -T $out_dir/$prefix\_paired_$i.$p -o $out_dir/$prefix\_paired_$i.$p.sort.bam $out_dir/$prefix\_paired_$i.$p.bam";
@@ -544,12 +604,12 @@ for(my $i=1; $i < $pilon_rounds+1; $i++){
 	
 	my $paired_bam_files = "";
 	foreach(@paired_bams){
-		$paired_bam_files = $paired_bam_files = $paired_bam_files . " --frags " . $_;
+		$paired_bam_files = $paired_bam_files . " --frags " . $_;
 	}
 	$paired_bam_files =~ s/^ //;
 	my $unpaired_bam_files = "";
 	foreach(@unpaired_bams){
-		$unpaired_bam_files = $unpaired_bam_files = $unpaired_bam_files . " --unpaired " . $_;
+		$unpaired_bam_files = $unpaired_bam_files . " --unpaired " . $_;
 	}
 	$unpaired_bam_files =~ s/^ //;
 	$cmd = "java -Xmx$xmx -jar $pilon_path $pilon_opts--genome $assembly $paired_bam_files $unpaired_bam_files --output $prefix\_pilon_$i --outdir $out_dir/$prefix\_pilon_$i --threads $threads > $out_dir/$prefix\_pilon_$i.log 2> $out_dir/$prefix\_pilon_$i.err";
