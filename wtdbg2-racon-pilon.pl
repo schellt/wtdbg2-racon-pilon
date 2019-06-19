@@ -353,12 +353,22 @@ if($prefix eq ""){
 	}
 	print STDERR "INFO\tSetting Outpufile prefix to $prefix\n";
 }
+
 if($longread_tech eq "rsII" or $longread_tech eq "rs" or $longread_tech eq "sequel" or $longread_tech eq "sq"){
 	if($minimap_opts eq ""){
-		$minimap_opts = "-H ";
+		$minimap_opts = "-x map-pb -H ";
 	}
 	else{
-		$minimap_opts = "-H " . $minimap_opts
+		$minimap_opts = "-x map-pb -H " . $minimap_opts;
+	}
+}
+
+if($longread_tech eq "nanopore" or $longread_tech eq "ont"){
+	if($minimap_opts eq ""){
+		$minimap_opts = "-x map-ont ";
+	}
+	else{
+		$minimap_opts = "-x map-ont " . $minimap_opts;
 	}
 }
 
