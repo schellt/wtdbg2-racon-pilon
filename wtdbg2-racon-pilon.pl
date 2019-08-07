@@ -339,8 +339,10 @@ if(not -d "$out_dir"){
 }
 
 if($longreads eq ""){
-	print STDERR "INFO\tNo long read file specified! Setting racon rounds to 0\n";
-	$racon_rounds = 0;
+	if($racon_rounds != 0){
+		print STDERR "INFO\tNo long read file specified! Setting racon rounds to 0\n";
+		$racon_rounds = 0;
+	}
 }
 
 if($prefix eq ""){
@@ -473,7 +475,7 @@ if($pilon_rounds > 0){
 	$samtools_version = `samtools --version | head -1 | sed 's/^samtools //'`;
 	chomp $samtools_version;
 	
-	$java_version = `java -version 2>&1 | head -1 | awk '{gsub("\\"","",\$NF);print \$NF}'`;
+	$java_version = `java -version 2>&1 | grep "version"`;
 	chomp $java_version;
 	
 	$pilon_version = `java -jar $pilon_path --version | sed 's/^Pilon version //;s/ .*\$//'`;
