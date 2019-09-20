@@ -2,6 +2,7 @@
 
 use strict;
 use warnings;
+use Path::Tiny;
 use Cwd 'abs_path';
 use IPC::Cmd qw[can_run run];
 
@@ -37,6 +38,7 @@ sub print_help{
 	print STDOUT "\t-racon-rounds INT\tNumber of racon iterations [3]\n";
 	print STDOUT "\t-pilon-rounds INT\tNumber of pilon iterations [3]\n";
 	print STDOUT "\t-pilon-path STR\t\tComplete path to the pilon jar file\n";
+	print STDOUT "\t-pr STR\t\t\tFile in bed format to restrict pilon polishing to certain regions\n\t\t\t\t[polish all positions]\n";
 	print STDOUT "\t-sr-mapper STR\t\tShort read mapper for correction with pilon [bwa]\n";
 	print STDOUT "\t\t\t\tValid arguments are: bwa, ngm\n";
 	print STDOUT "\t\t\t\tTo execute different mappers in different pilon rounds supply a\n";
@@ -72,7 +74,6 @@ sub exe_cmd{
 		print STDERR "CMD\t$cmd\n";
 	}
 	if($dry == 0){
-#		print STDERR "I would exe sth\n";
 		system("$cmd") == 0 or die "ERROR\tsystem $cmd failed: $?";
 	}
 }
@@ -106,6 +107,8 @@ my $final_assembly = "";
 my $home = `echo \$HOME`;
 chomp $home;
 
+my $polish_regions = "";
+
 my $input_error = 0;
 
 if(-f "/proc/meminfo"){
@@ -118,7 +121,13 @@ for (my $i = 0; $i < scalar(@ARGV);$i++){
 		$out_dir = abs_path($ARGV[$i+1]);
 	}
 	if ($ARGV[$i] eq "-a"){
-		$assembly = abs_path($ARGV[$i+1]);
+		if(-l $ARGV[$i+1]){
+			my $path =  path($ARGV[$i+1]);
+			$assembly = $path->absolute;
+		}
+		else{
+			$assembly = abs_path($ARGV[$i+1]);
+		}
 	}
 	if ($ARGV[$i] eq "-l"){
 		$longreads = abs_path($ARGV[$i+1]);
@@ -190,6 +199,9 @@ for (my $i = 0; $i < scalar(@ARGV);$i++){
 	if ($ARGV[$i] eq "-dry-run"){
 		$dry = 1;
 		$verbose = 1;
+	}
+	if ($ARGV[$i] eq "-pr"){
+		$polish_regions = abs_path($ARGV[$i+1]);
 	}
 	if ($ARGV[$i] eq "-h" or $ARGV[$i] eq "-help"){
 		print_help;
@@ -280,6 +292,10 @@ if($pilon_rounds > 0){
 	}
 	if($pilon_path eq ""){
 		print STDERR "ERROR\t-pilon-path is not specified and pilon rounds > 0!\n";
+		$input_error = 1;
+	}
+	if($polish_regions ne "" and not -f "$polish_regions"){
+		print STDERR "ERROR\t-pr is not a file!\n";
 		$input_error = 1;
 	}
 }
@@ -572,6 +588,9 @@ if($pilon_rounds > 0){
 		print "pilon options:        " . $pilon_opts . "\n";
 	}
 	print "java Xmx:             " . $xmx . "\n";
+	if($polish_regions ne ""){
+		print "polish regions:       " . $polish_regions . "\n";
+	}
 }
 print "racon rounds:         " . $racon_rounds . "\n";
 print "pilon rounds:         " . $pilon_rounds . "\n";
@@ -623,7 +642,12 @@ for(my $j = 0; $j < scalar(@srmapper); $j++){
 		$p++;
 		my ($for,$rev) = split(/,/,$_);
 		if($sr_mapper eq "bwa"){
-			$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$i.$p.err | samtools view -1 -b - > $out_dir/$prefix\_paired_$i.$p.bam";
+			if($polish_regions ne ""){
+				$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$i.$p.err | samtools view -L $polish_regions -1 -b - > $out_dir/$prefix\_paired_$i.$p.bam";
+			}
+			else{
+				$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$i.$p.err | samtools view -1 -b - > $out_dir/$prefix\_paired_$i.$p.bam";
+			}
 		}
 		if($sr_mapper eq "ngm"){
 			my $paired_ngm_opts = $ngm_opts;
@@ -639,7 +663,12 @@ for(my $j = 0; $j < scalar(@srmapper); $j++){
 				print STDERR "INFO\tPaired end mode with -n/--topn > 1 is not supported in ngm. Removing the option.\n";
 				$paired_ngm_opts = join(" ",@p_ngm_opts) . " ";
 			}
-			$cmd = "ngm $paired_ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
+			if($polish_regions ne ""){
+				$cmd = "ngm $paired_ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -L $polish_regions -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
+			}
+			else{
+				$cmd = "ngm $paired_ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
+			}
 		}
 		exe_cmd($cmd,$verbose,$dry);
 		$cmd = "samtools sort -l 9 -@ $threads -T $out_dir/$prefix\_paired_$i.$p -o $out_dir/$prefix\_paired_$i.$p.sort.bam $out_dir/$prefix\_paired_$i.$p.bam";
@@ -654,10 +683,20 @@ for(my $j = 0; $j < scalar(@srmapper); $j++){
 	foreach(keys(%unpaired_filter)){
 		$u++;
 		if($sr_mapper eq "bwa"){
-			$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$i.$u.err | samtools view -1 -b - > $out_dir/$prefix\_unpaired_$i.$u.bam";
+			if($polish_regions ne ""){
+				$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$i.$u.err | samtools view -L $polish_regions -1 -b - > $out_dir/$prefix\_unpaired_$i.$u.bam";
+			}
+			else{
+				$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$i.$u.err | samtools view -1 -b - > $out_dir/$prefix\_unpaired_$i.$u.bam";
+			}
 		}
 		if($sr_mapper eq "ngm"){
-			$cmd = "ngm $ngm_opts-t $threads -r $assembly -q $_ -o $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_ngm_unpaired_$i.$u.log 2> $out_dir/$prefix\_ngm_unpaired_$i.$u.err && samtools view -@ $threads -b $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_unpaired_$i.$u.bam 2> $out_dir/$prefix\_view_unpaired_$i.$u.err && rm $out_dir/$prefix\_unpaired_$i.$u.sam";
+			if($polish_regions ne ""){
+				$cmd = "ngm $ngm_opts-t $threads -r $assembly -q $_ -o $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_ngm_unpaired_$i.$u.log 2> $out_dir/$prefix\_ngm_unpaired_$i.$u.err && samtools view -L $polish_regions -@ $threads -b $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_unpaired_$i.$u.bam 2> $out_dir/$prefix\_view_unpaired_$i.$u.err && rm $out_dir/$prefix\_unpaired_$i.$u.sam";
+			}
+			else{
+				$cmd = "ngm $ngm_opts-t $threads -r $assembly -q $_ -o $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_ngm_unpaired_$i.$u.log 2> $out_dir/$prefix\_ngm_unpaired_$i.$u.err && samtools view -@ $threads -b $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_unpaired_$i.$u.bam 2> $out_dir/$prefix\_view_unpaired_$i.$u.err && rm $out_dir/$prefix\_unpaired_$i.$u.sam";
+			}
 		}
 		exe_cmd($cmd,$verbose,$dry);
 		$cmd = "samtools sort -l 9 -@ $threads -T $out_dir/$prefix\_unpaired_$i.$u -o $out_dir/$prefix\_unpaired_$i.$u.sort.bam $out_dir/$prefix\_unpaired_$i.$u.bam";
@@ -681,6 +720,29 @@ for(my $j = 0; $j < scalar(@srmapper); $j++){
 	$unpaired_bam_files =~ s/^ //;
 	$cmd = "java -Xmx$xmx -jar $pilon_path $pilon_opts--genome $assembly $paired_bam_files $unpaired_bam_files --output $prefix\_pilon_$i --outdir $out_dir/$prefix\_pilon_$i --threads $threads > $out_dir/$prefix\_pilon_$i.log 2> $out_dir/$prefix\_pilon_$i.err";
 	exe_cmd($cmd,$verbose,$dry);
+	
+	if($dry == 0){
+		open (IN, '<', "$out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta") or die "Could not open Inputfile $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta\n";
+		open (OUT, '>', "$out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta.tmp") or die "Could not open Outputfile $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta.tmp\n";
+		while (my $line = <IN>){
+			chomp $line;
+			if($line =~ m/^>/){
+				$line =~ s/.pilon$//;
+				print OUT $line . "\n";
+			}
+			else{
+				print OUT $line . "\n";
+			}
+		}
+		close IN;
+		close OUT;
+	}
+	else{
+		print STDERR "I would rename headers of $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta\n";
+	}
+	$cmd = "mv $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta.tmp $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta";
+	exe_cmd($cmd,$verbose,$dry);
+	
 	$final_assembly = "$out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta";
 }
 
