@@ -43,6 +43,8 @@ Input/pipeline options: [default]
 	-racon-rounds INT	Number of racon iterations [3]
 	-pilon-rounds INT	Number of pilon iterations [3]
 	-pilon-path STR		Complete path to the pilon jar file
+	-pr STR			File in bed format to restrict pilon polishing to certain regions
+				[polish all positions]
 	-sr-mapper STR		Short read mapper for correction with pilon [bwa]
 				Valid arguments are: bwa, ngm
 				To execute different mappers in different pilon rounds supply a
