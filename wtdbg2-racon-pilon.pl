@@ -6,7 +6,7 @@ use Path::Tiny;
 use Cwd 'abs_path';
 use IPC::Cmd qw[can_run run];
 
-my $version = "0.3";
+my $version = "0.4";
 
 sub print_help{
 	print STDOUT "\n";
@@ -15,50 +15,45 @@ sub print_help{
 	print STDOUT "Description:\n";
 	print STDOUT "\tAutomatic execution of (wtdbg2,) racon and pilon.\n";
 	print STDOUT "\t- The tools wtdbg2 and wtpoa-cns need to be in your \$PATH if longreads should be assembled.\n";
-	print STDOUT "\t- For execution of racon your \$PATH should contain racon and minimap2.\n";
-	print STDOUT "\t  Afterwards long reads are mapped to the assembly and correction(s) with racon are executed.\n";
-	print STDOUT "\t- If pilon should be executed java, bwa and samtools need to be in your \$PATH,\n";
-	print STDOUT "\t  as well -pilon-path and at least one Illumina read file need to be specified.\n";
+	print STDOUT "\t- For execution of long read polishing your \$PATH should contain minimap2 and racon.\n";
+	print STDOUT "\t- If short read polishing with pilon should be executed java, bwa and samtools need to be in\n";
+	print STDOUT "\t  your \$PATH, as well -pilon-path and at least one Illumina read file needs to be specified.\n";
 	print STDOUT "\t  Paired and unpaired short reads are mapped to the assembly by bwa mem, resulting bam\n";
 	print STDOUT "\t  files are sorted by samtools and pilon is executed on the bam files and the assembly.\n";
 	print STDOUT "\n";
 	print STDOUT "Usage:\n";
-	print STDOUT "\twtdbg2-racon-pilon.pl {-l <longreads.fq> -x <longread tech> | -a <assembly.fa>}\n";
-	print STDOUT "\t[-p <paired_1.fq>,<paired_2.fq> -u <unpaired.fq>]\n";
+	print STDOUT "\twtdbg2-racon-pilon.pl [-l <longreads.fq> -x <longread tech>] [-a <assembly.fa>]\n";
+	print STDOUT "\t                      [-p <paired_1.fq>,<paired_2.fq> -u <unpaired.fq>]\n";
 	print STDOUT "\n";
-	print STDOUT "Mandatory:\n";
+	print STDOUT "Mandatory (if -a is not set):\n";
 	print STDOUT "\t-l STR\t\t\tFile containing long reads in fastq format\n";
 	print STDOUT "\t-x STR\t\t\tLong read sequencing technology for wtdbg2 and minimap2 presets\n";
 	print STDOUT "\t\t\t\tValid arguments are: rsII, rs, sequel, sq, nanopore, ont,\n";
 	print STDOUT "\t\t\t\tcorrected, ccs\n";
-	print STDOUT "\tOR\n";
-	print STDOUT "\t-a STR\t\t\tFile containing an assembly that should be polished in fasta format\n";
+	print STDOUT "Mandatory (if -l and -x is not set):\n";
+	print STDOUT "\t-a STR\t\t\tFile containing an assembly in fasta format that should be polished\n";
 	print STDOUT "\n";
 	print STDOUT "Input/pipeline options: [default]\n";
 	print STDOUT "\t-racon-rounds INT\tNumber of racon iterations [3]\n";
 	print STDOUT "\t-pilon-rounds INT\tNumber of pilon iterations [3]\n";
 	print STDOUT "\t-pilon-path STR\t\tComplete path to the pilon jar file\n";
 	print STDOUT "\t-pr STR\t\t\tFile in bed format to restrict pilon polishing to certain regions\n\t\t\t\t[polish all positions]\n";
-	print STDOUT "\t-sr-mapper STR\t\tShort read mapper for correction with pilon [bwa]\n";
-	print STDOUT "\t\t\t\tValid arguments are: bwa, ngm\n";
-	print STDOUT "\t\t\t\tTo execute different mappers in different pilon rounds supply a\n";
-	print STDOUT "\t\t\t\tcomma separated list of mappers. Overrides -pilon-rounds.\n";
 	print STDOUT "\t-p STR\t\t\tTwo files with paired short reads in fastq format comma sperated\n";
 	print STDOUT "\t\t\t\tCan be specified multiple times\n";
 	print STDOUT "\t-u STR\t\t\tOne file with unpaired short reads in fastq format\n";
 	print STDOUT "\t\t\t\tCan be specified multiple times\n";
 	print STDOUT "\t-xmx STR/INT\t\tMaximum java heap size for pilon [current available]\n";
 	print STDOUT "\t-t INT\t\t\tNumber of parallel executed processes [1]\n";
-	print STDOUT "\t\t\t\tAffects wtdbg2, wtpoa-cns, minimap2, racon, bwa mem, ngm,\n";
-	print STDOUT "\t\t\t\tsamtools sort and pilon.\n";
+	print STDOUT "\t\t\t\tAffects wtdbg2, wtpoa-cns, minimap2, racon, bwa mem, samtools sort \n";
+	print STDOUT "\t\t\t\tand pilon.\n";
 	print STDOUT "\tPass specific options to tools with:\n";
-	print STDOUT "\t-wtdbg-opts [], -wtpoa-opts [], -minimap-opts [], -racon-opts [-u], -bwa-opts [-a -c 10000],\n\t-ngm-opts [], -pilon-opts [--diploid]\n";
+	print STDOUT "\t-wtdbg-opts [], -wtpoa-opts [], -minimap-opts [], -racon-opts [-u], -bwa-opts [-a -c 10000],\n\t-pilon-opts [--diploid]\n";
 	print STDOUT "\tFor example like -wtdbg-opts \'-g 100m\'\n";
 	print STDOUT "\n";
 	print STDOUT "Output options: [default]\n";
 	print STDOUT "\t-o STR\t\t\tOutput directory [.]\n";
 	print STDOUT "\t\t\t\tWill be created if not existing\n";
-	print STDOUT "\t-pre STR\t\tPrefix of output files [{w|<-a>.}r<racon rounds>p<pilon rounds>]\n";
+	print STDOUT "\t-pre STR\t\tPrefix of output files [{w|<-a>.}r<-racon-rounds>p<-pilon-rounds>]\n";
 	print STDOUT "\t-v\t\t\tPrint executed commands to STDERR [off]\n";
 	print STDOUT "\t-dry-run\t\tOnly print commands to STDERR instead of executing [off]\n";
 #	print STDOUT "\t-kt\t\tKeep temporary files [off]\n";
@@ -92,13 +87,10 @@ my $wtpoa_opts = "";
 my $minimap_opts = "";
 my $racon_opts = "-u ";
 my $bwa_opts = "-a -c 10000 ";
-my $ngm_opts = "";
 my $pilon_opts = "--diploid ";
 my $racon_rounds = 3;
 my $pilon_rounds = 3;
 my $pilon_path = "";
-my $sr_mapper = "bwa";
-my @srmapper = ();
 my $keep_tmp = 0;
 my $xmx = "";
 my $dry = 0;
@@ -106,7 +98,6 @@ my $cmd;
 my $final_assembly = "";
 my $home = `echo \$HOME`;
 chomp $home;
-
 my $polish_regions = "";
 
 my $input_error = 0;
@@ -157,10 +148,6 @@ for (my $i = 0; $i < scalar(@ARGV);$i++){
 		$bwa_opts = $ARGV[$i+1] . " ";	#nonsense flags are skipped from bwa
 		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
 	}
-	if ($ARGV[$i] eq "-ngm-opts"){
-		$ngm_opts = $ARGV[$i+1] . " ";
-		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
-	}
 	if ($ARGV[$i] eq "-wtdbg-opts"){
 		$wtdbg2_opts = $ARGV[$i+1] . " ";
 		$ARGV[$i+1] = "\'$ARGV[$i+1]\'";
@@ -190,9 +177,6 @@ for (my $i = 0; $i < scalar(@ARGV);$i++){
 	if ($ARGV[$i] eq "-pilon-path"){
 		$pilon_path = abs_path($ARGV[$i+1]);
 	}
-	if ($ARGV[$i] eq "-sr-mapper"){
-		$sr_mapper = $ARGV[$i+1];
-	}
 	if($ARGV[$i] eq "-kt"){
 		$keep_tmp = 1;
 	}
@@ -217,6 +201,26 @@ if(scalar(@ARGV) == 0){
 }
 
 print STDERR "CMD\t" . $0 . " " . join(" ",@ARGV) . "\n";
+
+if($longreads eq ""){
+	if($racon_rounds != 0){
+		print STDERR "INFO\tNo long read file specified! Setting racon rounds to 0\n";
+		$racon_rounds = 0;
+	}
+}
+
+if($longreads ne ""){
+	if($longread_tech eq ""){
+		print STDERR "ERROR\tLong read technology needs to be specified!\n";
+		$input_error = 1;
+	}
+	else{
+		if($longread_tech ne "rsII" and $longread_tech ne "rs" and $longread_tech ne "sequel" and $longread_tech ne "sq" and $longread_tech ne "nanopore" and $longread_tech ne "ont" and $longread_tech ne "corrected"and $longread_tech ne "ccs"){
+			print STDERR "ERROR\tNo valid long read technology specified!\n";
+			$input_error = 1;
+		}
+	}
+}
 
 if($assembly eq "" and $longreads eq ""){
 	print STDERR "ERROR\tSpecify either longreads or an assembly!\n";
@@ -245,41 +249,9 @@ if($racon_rounds > 0){
 	}
 }
 
-if($sr_mapper =~ m/,/){
-	@srmapper = split(/,/,$sr_mapper);
-	my $sr_mapper_error = 0;
-	foreach(@srmapper){
-		if($_ ne "bwa" and $_ ne "ngm"){
-			print STDERR "ERROR\t$_ is not a valid argument for -sr-mapper!\n";
-			$input_error = 1;
-			$sr_mapper_error = 1;
-		}
-	}
-	if($sr_mapper_error == 1){
-		print STDERR "ERROR\tNo valid short read mapper specified!\n";
-		$input_error = 1;
-	}
-	else{
-		$pilon_rounds = scalar(@srmapper);
-	}
-}
-else{
-	if($sr_mapper ne "bwa" and $sr_mapper ne "ngm" and $pilon_rounds > 0){
-		print STDERR "ERROR\tNo valid short read mapper specified!\n";
-		$input_error = 1;
-	}
-	else{
-		@srmapper = (($sr_mapper) x $pilon_rounds);
-	}
-}
-
 if($pilon_rounds > 0){
-	if(not defined(can_run("bwa")) and $sr_mapper =~ /bwa/){
+	if(not defined(can_run("bwa"))){
 		print STDERR "ERROR\tbwa is not in your \$PATH and pilon rounds > 0!\n";
-		$input_error = 1;
-	}
-	if(not defined(can_run("ngm")) and $sr_mapper =~ /ngm/){
-		print STDERR "ERROR\tngm is not in your \$PATH and pilon rounds > 0!\n";
 		$input_error = 1;
 	}
 	if(not defined(can_run("samtools"))){
@@ -319,19 +291,6 @@ if($pilon_rounds !~ m/^\d+$/ or $pilon_rounds < 0){
 	$input_error = 1;
 }
 
-if($assembly eq ""){
-	if($longread_tech eq ""){
-		print STDERR "ERROR\tLong read technology needs to be specified!\n";
-		$input_error = 1;
-	}
-	else{
-		if($longread_tech ne "rsII" and $longread_tech ne "rs" and $longread_tech ne "sequel" and $longread_tech ne "sq" and $longread_tech ne "nanopore" and $longread_tech ne "ont" and $longread_tech ne "corrected"and $longread_tech ne "ccs"){
-			print STDERR "ERROR\tNo valid long read technology specified!\n";
-			$input_error = 1;
-		}
-	}
-}
-
 if($xmx eq "" and $pilon_rounds > 0){
 	print STDERR "ERROR\tJava Xmx not specified and /proc/meminfo not present!\n";
 	$input_error = 1;
@@ -339,6 +298,13 @@ if($xmx eq "" and $pilon_rounds > 0){
 if($longreads ne ""){
 	if(not -f "$longreads"){
 		print STDERR "ERROR\tNo existing long read file specified!\n";
+		$input_error = 1;
+	}
+}
+
+if($assembly ne ""){
+	if(not -f "$assembly"){
+		print STDERR "ERROR\tNo existing assembly file specified!\n";
 		$input_error = 1;
 	}
 }
@@ -352,13 +318,6 @@ if(not -d "$out_dir"){
 	print STDERR "INFO\tCreating output directory $out_dir\n";
 	$cmd="mkdir -p $out_dir";
 	exe_cmd($cmd,$verbose,$dry);
-}
-
-if($longreads eq ""){
-	if($racon_rounds != 0){
-		print STDERR "INFO\tNo long read file specified! Setting racon rounds to 0\n";
-		$racon_rounds = 0;
-	}
 }
 
 if($prefix eq ""){
@@ -442,7 +401,6 @@ foreach(@unpaired){
 if(scalar(keys(%paired_filter)) == 0 and scalar(keys(%unpaired_filter)) == 0){
 	print STDERR "INFO\tNo existing short read files specified! Setting pilon rounds to 0\n";
 	$pilon_rounds = 0;
-	@srmapper = ();
 }
 
 if($racon_rounds == 0 and $pilon_rounds == 0 and $assembly ne ""){
@@ -473,20 +431,12 @@ if($racon_rounds > 0){
 }
 
 my $bwa_version;
-my $ngm_version;
 my $samtools_version;
 my $java_version;
 my $pilon_version;
 if($pilon_rounds > 0){
-	if($sr_mapper =~ /bwa/){
-		$bwa_version = `bwa 2>&1 | head -3 | tail -1 | sed 's/^Version: //'`;
-		chomp $bwa_version;
-	}
-	
-	if($sr_mapper =~ /ngm/){
-		$ngm_version = `ngm 2>&1 | grep "\\[MAIN\\] NextGenMap " | awk '{print \$NF}'`;
-		chomp $ngm_version;
-	}
+	$bwa_version = `bwa 2>&1 | head -3 | tail -1 | sed 's/^Version: //'`;
+	chomp $bwa_version;
 	
 	$samtools_version = `samtools --version | head -1 | sed 's/^samtools //'`;
 	chomp $samtools_version;
@@ -528,12 +478,7 @@ if($racon_rounds > 0){
 	print "racon:                " . $racon_version . "\n";
 }
 if($pilon_rounds > 0){
-	if($sr_mapper =~ m/bwa/){
-		print "bwa:                  " . $bwa_version . "\n";
-	}
-	if($sr_mapper =~ m/ngm/){
-		print "ngm:                  " . $ngm_version . "\n";
-	}
+	print "bwa:                  " . $bwa_version . "\n";
 	print "samtools:             " . $samtools_version . "\n";
 	print "java:                 " . $java_version . "\n";
 	print "pilon:                " . $pilon_version . "\n";
@@ -577,12 +522,8 @@ if($racon_rounds > 0){
 	}
 }
 if($pilon_rounds > 0){
-	print "short read mapper:    " . $sr_mapper . "\n";
-	if($bwa_opts ne "" and $sr_mapper =~ m/bwa/){
+	if($bwa_opts ne ""){
 		print "bwa options:          " . $bwa_opts . "\n";
-	}
-	if($ngm_opts ne "" and $sr_mapper =~ m/ngm/){
-		print "ngm options:          " . $ngm_opts . "\n";
 	}
 	if($pilon_opts ne ""){
 		print "pilon options:        " . $pilon_opts . "\n";
@@ -622,89 +563,59 @@ if($longreads ne ""){
 	}
 }
 
-for(my $j = 0; $j < scalar(@srmapper); $j++){
-	my $i = $j+1;
-	$sr_mapper = $srmapper[$j];
+my $samtools_threads = $threads - 1;
+
+for(my $j = 1; $j < $pilon_rounds+1; $j++){
 	my @paired_bams = ();
 	my @unpaired_bams = ();
-	if($i > 1){
-		my $before = $i-1;
+	if($j > 1){
+		my $before = $j-1;
 		$assembly = "$out_dir/$prefix\_pilon_$before/$prefix\_pilon_$before.fasta";
 	}
 
-	if($sr_mapper eq "bwa"){	
-		$cmd = "bwa index $assembly > $out_dir/$prefix\_index_$i.log 2> $out_dir/$prefix\_index_$i.err";
+	if(not -f $assembly . ".amb" or not -f $assembly . ".ann" or not -f $assembly . ".bwt" or not -f $assembly . ".pac" or not -f $assembly . ".sa"){
+		$cmd = "bwa index $assembly > $out_dir/$prefix\_index_$j.log 2> $out_dir/$prefix\_index_$j.err";
 		exe_cmd($cmd,$verbose,$dry);
+	}
+	else{
+		print STDERR "INFO\tIndex files for $assembly already existing\n";
 	}
 	
 	my $p = 0;
 	foreach(keys(%paired_filter)){
 		$p++;
 		my ($for,$rev) = split(/,/,$_);
-		if($sr_mapper eq "bwa"){
-			if($polish_regions ne ""){
-				$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$i.$p.err | samtools view -L $polish_regions -1 -b - > $out_dir/$prefix\_paired_$i.$p.bam";
-			}
-			else{
-				$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$i.$p.err | samtools view -1 -b - > $out_dir/$prefix\_paired_$i.$p.bam";
-			}
+		if($polish_regions ne ""){
+			$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$j.$p.err | samtools view -L $polish_regions -1 -b - > $out_dir/$prefix\_paired_$j.$p.bam";
 		}
-		if($sr_mapper eq "ngm"){
-			my $paired_ngm_opts = $ngm_opts;
-			my @p_ngm_opts = split(/ /,$ngm_opts);
-			my $change_ngm_opts = 0;
-			for(my $i = 0; $i < scalar(@p_ngm_opts); $i++){
-				if($p_ngm_opts[$i] eq "-n" or $p_ngm_opts[$i] eq "--topn"){
-					$change_ngm_opts = 1;
-					splice (@p_ngm_opts,$i,2);
-				}
-			}
-			if($change_ngm_opts == 1){
-				print STDERR "INFO\tPaired end mode with -n/--topn > 1 is not supported in ngm. Removing the option.\n";
-				$paired_ngm_opts = join(" ",@p_ngm_opts) . " ";
-			}
-			if($polish_regions ne ""){
-				$cmd = "ngm $paired_ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -L $polish_regions -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
-			}
-			else{
-				$cmd = "ngm $paired_ngm_opts-t $threads -r $assembly -1 $for -2 $rev -o $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_ngm_paired_$i.$p.log 2> $out_dir/$prefix\_ngm_paired_$i.$p.err && samtools view -@ $threads -b $out_dir/$prefix\_paired_$i.$p.sam > $out_dir/$prefix\_paired_$i.$p.bam 2> $out_dir/$prefix\_view_paired_$i.$p.err && rm $out_dir/$prefix\_paired_$i.$p.sam";
-			}
+		else{
+			$cmd = "bwa mem $bwa_opts-t $threads $assembly $for $rev 2> $out_dir/$prefix\_bwa_mem_paired_$j.$p.err | samtools view -1 -b - > $out_dir/$prefix\_paired_$j.$p.bam";
 		}
 		exe_cmd($cmd,$verbose,$dry);
-		$cmd = "samtools sort -l 9 -@ $threads -T $out_dir/$prefix\_paired_$i.$p -o $out_dir/$prefix\_paired_$i.$p.sort.bam $out_dir/$prefix\_paired_$i.$p.bam";
-		push(@paired_bams,"$out_dir/$prefix\_paired_$i.$p.sort.bam");
+		$cmd = "samtools sort -l 9 -@ $samtools_threads -T $out_dir/$prefix\_paired_$j.$p -o $out_dir/$prefix\_paired_$j.$p.sort.bam $out_dir/$prefix\_paired_$j.$p.bam";
+		push(@paired_bams,"$out_dir/$prefix\_paired_$j.$p.sort.bam");
 		exe_cmd($cmd,$verbose,$dry);
-		$cmd = "rm $out_dir/$prefix\_paired_$i.$p.bam";
+		$cmd = "rm $out_dir/$prefix\_paired_$j.$p.bam";
 		exe_cmd($cmd,$verbose,$dry);
-		$cmd = "samtools index $out_dir/$prefix\_paired_$i.$p.sort.bam";
+		$cmd = "samtools index $out_dir/$prefix\_paired_$j.$p.sort.bam";
 		exe_cmd($cmd,$verbose,$dry);
 	}
 	my $u = 0;
 	foreach(keys(%unpaired_filter)){
 		$u++;
-		if($sr_mapper eq "bwa"){
-			if($polish_regions ne ""){
-				$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$i.$u.err | samtools view -L $polish_regions -1 -b - > $out_dir/$prefix\_unpaired_$i.$u.bam";
-			}
-			else{
-				$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$i.$u.err | samtools view -1 -b - > $out_dir/$prefix\_unpaired_$i.$u.bam";
-			}
+		if($polish_regions ne ""){
+			$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$j.$u.err | samtools view -L $polish_regions -1 -b - > $out_dir/$prefix\_unpaired_$j.$u.bam";
 		}
-		if($sr_mapper eq "ngm"){
-			if($polish_regions ne ""){
-				$cmd = "ngm $ngm_opts-t $threads -r $assembly -q $_ -o $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_ngm_unpaired_$i.$u.log 2> $out_dir/$prefix\_ngm_unpaired_$i.$u.err && samtools view -L $polish_regions -@ $threads -b $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_unpaired_$i.$u.bam 2> $out_dir/$prefix\_view_unpaired_$i.$u.err && rm $out_dir/$prefix\_unpaired_$i.$u.sam";
-			}
-			else{
-				$cmd = "ngm $ngm_opts-t $threads -r $assembly -q $_ -o $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_ngm_unpaired_$i.$u.log 2> $out_dir/$prefix\_ngm_unpaired_$i.$u.err && samtools view -@ $threads -b $out_dir/$prefix\_unpaired_$i.$u.sam > $out_dir/$prefix\_unpaired_$i.$u.bam 2> $out_dir/$prefix\_view_unpaired_$i.$u.err && rm $out_dir/$prefix\_unpaired_$i.$u.sam";
-			}
+		else{
+			$cmd = "bwa mem $bwa_opts-t $threads $assembly $_ 2> $out_dir/$prefix\_bwa_mem_unpaired_$j.$u.err | samtools view -1 -b - > $out_dir/$prefix\_unpaired_$j.$u.bam";
 		}
 		exe_cmd($cmd,$verbose,$dry);
-		$cmd = "samtools sort -l 9 -@ $threads -T $out_dir/$prefix\_unpaired_$i.$u -o $out_dir/$prefix\_unpaired_$i.$u.sort.bam $out_dir/$prefix\_unpaired_$i.$u.bam";
-		push(@unpaired_bams,"$out_dir/$prefix\_unpaired_$i.$u.sort.bam");
+		$cmd = "samtools sort -l 9 -@ $samtools_threads -T $out_dir/$prefix\_unpaired_$j.$u -o $out_dir/$prefix\_unpaired_$j.$u.sort.bam $out_dir/$prefix\_unpaired_$j.$u.bam";
+		push(@unpaired_bams,"$out_dir/$prefix\_unpaired_$j.$u.sort.bam");
 		exe_cmd($cmd,$verbose,$dry);
-		$cmd = "rm $out_dir/$prefix\_unpaired_$i.$u.bam";
+		$cmd = "rm $out_dir/$prefix\_unpaired_$j.$u.bam";
 		exe_cmd($cmd,$verbose,$dry);
-		$cmd = "samtools index $out_dir/$prefix\_unpaired_$i.$u.sort.bam";
+		$cmd = "samtools index $out_dir/$prefix\_unpaired_$j.$u.sort.bam";
 		exe_cmd($cmd,$verbose,$dry);
 	}
 	
@@ -718,12 +629,12 @@ for(my $j = 0; $j < scalar(@srmapper); $j++){
 		$unpaired_bam_files = $unpaired_bam_files . " --unpaired " . $_;
 	}
 	$unpaired_bam_files =~ s/^ //;
-	$cmd = "java -Xmx$xmx -jar $pilon_path $pilon_opts--genome $assembly $paired_bam_files $unpaired_bam_files --output $prefix\_pilon_$i --outdir $out_dir/$prefix\_pilon_$i --threads $threads > $out_dir/$prefix\_pilon_$i.log 2> $out_dir/$prefix\_pilon_$i.err";
+	$cmd = "java -Xmx$xmx -jar $pilon_path $pilon_opts--genome $assembly $paired_bam_files $unpaired_bam_files --output $prefix\_pilon_$j --outdir $out_dir/$prefix\_pilon_$j --threads $threads > $out_dir/$prefix\_pilon_$j.log 2> $out_dir/$prefix\_pilon_$j.err";
 	exe_cmd($cmd,$verbose,$dry);
 	
 	if($dry == 0){
-		open (IN, '<', "$out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta") or die "Could not open Inputfile $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta\n";
-		open (OUT, '>', "$out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta.tmp") or die "Could not open Outputfile $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta.tmp\n";
+		open (IN, '<', "$out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta") or die "Could not open Inputfile $out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta\n";
+		open (OUT, '>', "$out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta.tmp") or die "Could not open Outputfile $out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta.tmp\n";
 		while (my $line = <IN>){
 			chomp $line;
 			if($line =~ m/^>/){
@@ -738,12 +649,12 @@ for(my $j = 0; $j < scalar(@srmapper); $j++){
 		close OUT;
 	}
 	else{
-		print STDERR "I would rename headers of $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta\n";
+		print STDERR "I would rename headers of $out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta\n";
 	}
-	$cmd = "mv $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta.tmp $out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta";
+	$cmd = "mv $out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta.tmp $out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta";
 	exe_cmd($cmd,$verbose,$dry);
 	
-	$final_assembly = "$out_dir/$prefix\_pilon_$i/$prefix\_pilon_$i.fasta";
+	$final_assembly = "$out_dir/$prefix\_pilon_$j/$prefix\_pilon_$j.fasta";
 }
 
 print "Final assembly:       " . $final_assembly . "\n";
