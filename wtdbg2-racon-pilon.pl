@@ -6,7 +6,7 @@ use Path::Tiny;
 use Cwd 'abs_path';
 use IPC::Cmd qw[can_run run];
 
-my $version = "0.4";
+my $version = "0.5";
 
 sub print_help{
 	print STDOUT "\n";
@@ -318,6 +318,12 @@ if(not -d "$out_dir"){
 	print STDERR "INFO\tCreating output directory $out_dir\n";
 	$cmd="mkdir -p $out_dir";
 	exe_cmd($cmd,$verbose,$dry);
+}
+
+if($assembly !~ m/\.fa(sta)?$/){ #racon needs the fa(sta)? file ending
+	$cmd="ln -s $assembly $assembly.fa";
+	exe_cmd($cmd,$verbose,$dry);
+	$assembly = "$assembly.fa";
 }
 
 if($prefix eq ""){
